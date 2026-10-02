@@ -30,7 +30,7 @@ class Pinterest extends OAuth2
     /**
      * {@inheritdoc}
      */
-    protected $authorizeUrl = 'https://api.pinterest.com/oauth';
+    protected $authorizeUrl = 'https://www.pinterest.com/oauth/';
 
     /**
      * {@inheritdoc}
