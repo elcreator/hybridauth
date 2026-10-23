@@ -36,6 +36,8 @@ use Hybridauth\User;
  */
 class X extends OAuth2
 {
+    protected $pkceMethod = 'S256';
+
     /**
      * {@inheritdoc}
      */
@@ -68,28 +70,12 @@ class X extends OAuth2
     {
         parent::initialize();
 
+        $this->deleteStoredData('codeVerifier');
+        $this->deleteStoredData('codeChallenge');
+
         $this->tokenExchangeHeaders = [
             'Authorization' => 'Basic ' . base64_encode($this->clientId . ':' . $this->clientSecret),
             'Content-Type'  => 'application/x-www-form-urlencoded',
-        ];
-
-        $codeVerifier = $this->getStoredData('codeVerifier');
-        if (!$codeVerifier) {
-            $codeVerifier = $this->generateCodeVerifier();
-            $this->storeData('codeVerifier', $codeVerifier);
-        }
-
-        $codeChallenge = $this->getStoredData('codeChallenge');
-        if (!$codeChallenge) {
-            $codeChallenge = $this->generateCodeChallenge($codeVerifier);
-            $this->storeData('codeChallenge', $codeChallenge);
-        }
-
-        // Set additional authorize URL parameters required by Twitter
-        $this->AuthorizeUrlParameters += [
-            'code_challenge' => $codeChallenge,
-            'code_challenge_method' => 'S256',
-            'response_type' => 'code',
         ];
 
         if ($this->isRefreshTokenAvailable()) {
@@ -99,53 +85,6 @@ class X extends OAuth2
                 'grant_type' => 'refresh_token',
             ];
         }
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    protected function exchangeCodeForAccessToken($code)
-    {
-        $parameters = [
-            'grant_type' => 'authorization_code',
-            'code' => $code,
-            'redirect_uri' => $this->callback,
-            'code_verifier' => $this->getStoredData('codeVerifier'),
-        ];
-
-        $response = $this->httpClient->request(
-            $this->accessTokenUrl,
-            $this->tokenExchangeMethod,
-            $parameters,
-            $this->tokenExchangeHeaders,
-        );
-
-        $this->validateApiResponse('Unable to exchange code for API access token');
-
-        return $response;
-    }
-
-    /**
-     * Generate a random code verifier for PKCE
-     *
-     * @return string
-     */
-    protected function generateCodeVerifier()
-    {
-        $random = random_bytes(64);
-        return rtrim(strtr(base64_encode($random), '+/', '-_'), '=');
-    }
-
-    /**
-     * Generate a code challenge for PKCE
-     *
-     * @param string $codeVerifier
-     * @return string
-     */
-    protected function generateCodeChallenge($codeVerifier)
-    {
-        $hash = hash('sha256', $codeVerifier, true);
-        return rtrim(strtr(base64_encode($hash), '+/', '-_'), '=');
     }
 
     /**

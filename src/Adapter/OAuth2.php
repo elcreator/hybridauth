@@ -243,6 +243,9 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
 
     protected $refreshingAccessToken = false;
 
+    /** @var string|null */
+    protected $pkceMethod = null;
+
     /**
      * {@inheritdoc}
      */
@@ -259,12 +262,24 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
 
         $this->scope = $this->config->exists('scope') ? $this->config->get('scope') : $this->scope;
 
-        if ($this->config->exists('tokens')) {
-            $this->setAccessToken($this->config->get('tokens'));
-        }
-
         if ($this->config->exists('supportRequestState')) {
             $this->supportRequestState = $this->config->get('supportRequestState');
+        }
+
+        if ($this->config->exists('pkce')) {
+            $pkce = $this->config->get('pkce');
+            if ($pkce === true || $pkce === 'S256') {
+                $this->pkceMethod = 'S256';
+            } elseif ($pkce !== false || $this->pkceMethod !== null) {
+                throw new InvalidApplicationCredentialsException('Only S256 PKCE is supported.');
+            }
+        }
+        if ($this->pkceMethod && !$this->supportRequestState) {
+            throw new InvalidApplicationCredentialsException('PKCE requires authorization state validation.');
+        }
+
+        if ($this->config->exists('tokens')) {
+            $this->setAccessToken($this->config->get('tokens'));
         }
 
         $this->setCallback($this->config->get('callback'));
@@ -390,11 +405,12 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
      */
     protected function authenticateCheckError()
     {
-        $error = $this->filterInput(INPUT_GET, 'error', FILTER_SANITIZE_SPECIAL_CHARS);
+        $input = isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST' ? INPUT_POST : INPUT_GET;
+        $error = $this->filterInput($input, 'error', FILTER_SANITIZE_SPECIAL_CHARS);
 
         if (!empty($error)) {
-            $error_description = $this->filterInput(INPUT_GET, 'error_description', FILTER_SANITIZE_SPECIAL_CHARS);
-            $error_uri = $this->filterInput(INPUT_GET, 'error_uri', FILTER_SANITIZE_SPECIAL_CHARS);
+            $error_description = $this->filterInput($input, 'error_description', FILTER_SANITIZE_SPECIAL_CHARS);
+            $error_uri = $this->filterInput($input, 'error_uri', FILTER_SANITIZE_SPECIAL_CHARS);
 
             $collated_error = sprintf('Provider returned an error: %s %s %s', $error, $error_description, $error_uri);
 
@@ -452,6 +468,7 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
             && !Data\Random::equals($this->getStoredData('authorization_state'), $state)
         ) {
             $this->deleteStoredData('authorization_state');
+            $this->deleteStoredData('pkce_code_verifier');
             throw new InvalidAuthorizationStateException(
                 'The authorization state [state=' . substr(htmlentities((string) $state, ENT_QUOTES, 'UTF-8'), 0, 100) . '] '
                 . 'of this page is either invalid or has already been consumed.'
@@ -497,7 +514,7 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
      */
     protected function getAuthorizeUrl($parameters = [])
     {
-        $this->AuthorizeUrlParameters = !empty($parameters)
+        $parameters = !empty($parameters)
             ? $parameters
             : array_replace(
                 (array)$this->AuthorizeUrlParameters,
@@ -505,15 +522,29 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
             );
 
         if ($this->supportRequestState) {
-            if (!isset($this->AuthorizeUrlParameters['state'])) {
-                $this->AuthorizeUrlParameters['state'] = 'HA-' . Data\Random::token();
+            if (!isset($parameters['state'])) {
+                $parameters['state'] = 'HA-' . Data\Random::token();
             }
 
-            $this->storeData('authorization_state', $this->AuthorizeUrlParameters['state']);
+            if (!is_string($parameters['state']) || $parameters['state'] === '') {
+                throw new InvalidAuthorizationStateException('Authorization state must be a nonempty string.');
+            }
+            $this->storeData('authorization_state', $parameters['state']);
         }
 
-        $queryParams = http_build_query($this->AuthorizeUrlParameters, '', '&', $this->AuthorizeUrlParametersEncType);
-        return $this->authorizeUrl . '?' . $queryParams;
+        if ($this->pkceMethod === 'S256') {
+            $verifier = Data\Random::token();
+            $this->storeData('pkce_code_verifier', $verifier);
+            $parameters['code_challenge'] = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
+            $parameters['code_challenge_method'] = 'S256';
+        }
+        if (isset($parameters['scope']) && is_array($parameters['scope'])) {
+            $parameters['scope'] = implode(' ', $parameters['scope']);
+        }
+        $queryParams = http_build_query($parameters, '', '&', $this->AuthorizeUrlParametersEncType);
+        $parts = explode('#', $this->authorizeUrl, 2);
+        $separator = strpos($parts[0], '?') === false ? '?' : (preg_match('/[?&]$/', $parts[0]) ? '' : '&');
+        return $parts[0] . $separator . $queryParams . (isset($parts[1]) ? '#' . $parts[1] : '');
     }
 
     /**
@@ -540,12 +571,21 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
      */
     protected function exchangeCodeForAccessToken($code)
     {
-        $this->tokenExchangeParameters['code'] = $code;
+        $parameters = $this->tokenExchangeParameters;
+        $parameters['code'] = $code;
+        if ($this->pkceMethod === 'S256') {
+            $verifier = $this->getStoredData('pkce_code_verifier');
+            $this->deleteStoredData('pkce_code_verifier');
+            if (!is_string($verifier) || !preg_match('/^[A-Za-z0-9._~-]{43,128}$/D', $verifier)) {
+                throw new InvalidAuthorizationCodeException('Missing or consumed PKCE verifier; restart authorization.');
+            }
+            $parameters['code_verifier'] = $verifier;
+        }
 
         $response = $this->httpClient->request(
             $this->accessTokenUrl,
             $this->tokenExchangeMethod,
-            $this->tokenExchangeParameters,
+            $parameters,
             $this->tokenExchangeHeaders
         );
 
