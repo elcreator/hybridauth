@@ -75,8 +75,12 @@ abstract class OpenID extends AbstractAdapter implements AdapterInterface
             $hostUrl .= ':' . $hostPort;
         }
 
-        // @fixme: add proxy
-        $this->openIdClient = new LightOpenID($hostUrl, null);
+        $this->openIdClient = new LightOpenID(
+            $hostUrl,
+            $this->config->get('openid_proxy'),
+            $this->config->get('openid_trusted_endpoints') ?: []
+        );
+        $this->openIdClient->cainfo = $this->config->get('openid_cainfo');
     }
 
     /**
