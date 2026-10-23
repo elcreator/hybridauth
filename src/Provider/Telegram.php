@@ -1,731 +1,243 @@
 <?php
 
-/*!
- * HybridAuth
- * https://hybridauth.github.io | https://github.com/hybridauth/hybridauth
- *  (c) 2017 Hybridauth authors | https://hybridauth.github.io/license.html
- */
-
 namespace Hybridauth\Provider;
 
+use Hybridauth\HttpClient\Util;
+use Hybridauth\Data\Collection;
+use Hybridauth\Data\Random;
+use Hybridauth\User\Profile;
 use Hybridauth\Adapter\AbstractAdapter;
-use Hybridauth\Data;
-use Hybridauth\Exception\AuthorizationDeniedException;
+use Hybridauth\Adapter\AdapterInterface;
 use Hybridauth\Exception\InvalidApplicationCredentialsException;
 use Hybridauth\Exception\InvalidAuthorizationCodeException;
-use Hybridauth\Exception\InvalidAuthorizationStateException;
 use Hybridauth\Exception\UnexpectedApiResponseException;
-use Hybridauth\HttpClient;
-use Hybridauth\User;
 
 /**
- * Telegram Login via OpenID Connect (Authorization Code + PKCE).
+ * Telegram provider adapter.
  *
- * Setup:
- *   1. Create a bot via @BotFather.
- *   2. Go to Bot Settings → Web Login, register your callback URL.
- *   3. Copy the Client ID and Client Secret shown there.
- *      These are NOT the same as the bot token.
+ * To set up Telegram you need to interactively create a bot using the
+ * Telegram mobile app, talking to botfather. The minimum conversation
+ * will look like:
  *
- * Configuration:
+ * /newbot
+ * My Bot Title
+ * nameofmynewbot
+ * /setdomain
+ * @nameofmynewbot
+ * mydomain.com
+ *
+ * Example:
  *
  *   $config = [
- *       'callback' => 'https://example.com/auth/callback',
- *       'keys'     => [
- *           'id'     => 'CLIENT_ID',
- *           'secret' => 'CLIENT_SECRET',
- *       ],
- *       'scope' => 'openid profile phone', // optional, default: 'openid profile'
+ *       'callback' => Hybridauth\HttpClient\Util::getCurrentUrl(),
+ *       'keys' => ['id' => 'your_bot_name', 'secret' => 'your_bot_token'],
  *   ];
  *
- * Available scopes: openid (required), profile, phone, telegram:bot_access
+ *   $adapter = new Hybridauth\Provider\Telegram($config);
  *
- * Profile fields: identifier, displayName, firstName, lastName,
- *                 photoURL, profileURL, phone (requires 'phone' scope)
+ *   try {
+ *       $adapter->authenticate();
  *
- * Restoring tokens from database:
- *   $adapter->setAccessToken($tokensFromDb);
- *   $profile = $adapter->getUserProfile();
- *
- * @see https://core.telegram.org/bots/telegram-login
+ *       $userProfile = $adapter->getUserProfile();
+ *   } catch (\Exception $e) {
+ *       print $e->getMessage();
+ *   }
  */
-class Telegram extends AbstractAdapter
+class Telegram extends AbstractAdapter implements AdapterInterface
 {
-    const AUTH_URL   = 'https://oauth.telegram.org/auth';
-    const TOKEN_URL  = 'https://oauth.telegram.org/token';
-    const JWKS_URL   = 'https://oauth.telegram.org/.well-known/jwks.json';
-    const ISSUER     = 'https://oauth.telegram.org';
-    const CLOCK_SKEW = 30;
+    protected $botId = '';
 
-    /** @var string */
-    protected $clientId = '';
+    protected $botSecret = '';
 
-    /** @var string */
-    protected $clientSecret = '';
+    protected $callbackUrl = '';
 
-    /** @var string */
-    protected $scope = 'openid profile';
+    /**
+     * IPD API Documentation
+     *
+     * OPTIONAL.
+     *
+     * @var string
+     */
+    protected $apiDocumentation = 'https://core.telegram.org/bots';
 
-    /** @var string */
-    protected $apiDocumentation = 'https://core.telegram.org/bots/telegram-login';
-
+    /**
+     * {@inheritdoc}
+     */
     protected function configure()
     {
-        $this->clientId     = $this->config->filter('keys')->get('id');
-        $this->clientSecret = $this->config->filter('keys')->get('secret');
+        $this->botId = $this->config->filter('keys')->get('id');
+        $this->botSecret = $this->config->filter('keys')->get('secret');
+        $this->callbackUrl = $this->config->get('callback');
 
-        if (! $this->clientId || ! $this->clientSecret) {
+        if (!$this->botId || !$this->botSecret) {
             throw new InvalidApplicationCredentialsException(
                 'Your application id is required in order to connect to ' . $this->providerId
             );
         }
-
-        if ($this->config->exists('scope')) {
-            $this->scope = trim($this->config->get('scope'));
-        }
-
-        if (strpos($this->scope, 'openid') === false) {
-            $this->scope = 'openid ' . $this->scope;
-        }
-
-        $this->setCallback($this->config->get('callback'));
-
-        if ($this->config->exists('tokens')) {
-            $this->setAccessToken($this->config->get('tokens'));
-        }
     }
 
+    /**
+     * {@inheritdoc}
+     */
     protected function initialize()
     {
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function authenticate()
     {
         $this->logger->info(sprintf('%s::authenticate()', get_class($this)));
-
-        if ($this->isConnected()) {
-            return true;
-        }
-
-        if ($this->getStoredData('id_token')) {
-            $this->logger->debug(sprintf(
-                '%s::authenticate() — id_token expired at %s, clearing session.',
-                get_class($this),
-                date('Y-m-d H:i:s', (int) $this->getStoredData('expires_at'))
-            ));
-            $this->clearStoredData();
-        }
-
-        try {
+        if (!$this->filterInput(INPUT_GET, 'hash')) {
+            $this->authenticateBegin();
+        } else {
             $this->authenticateCheckError();
-
-            $code = $this->filterInput(INPUT_GET, 'code');
-
-            if (empty($code)) {
-                $this->authenticateBegin();
-            } else {
-                $this->authenticateFinish($code);
-            }
-        } catch (\Exception $e) {
-            $this->clearStoredData();
-            throw $e;
+            $this->authenticateFinish();
         }
-
         return null;
     }
 
     /**
-     * @throws AuthorizationDeniedException
-     * @throws InvalidAuthorizationCodeException
+     * {@inheritdoc}
+     */
+    public function isConnected()
+    {
+        $authData = $this->getStoredData('auth_data');
+        return !empty($authData);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getUserProfile()
+    {
+        $data = new Collection($this->getStoredData('auth_data'));
+
+        if (!$data->exists('id')) {
+            throw new UnexpectedApiResponseException('Provider API returned an unexpected response.');
+        }
+
+        $userProfile = new Profile();
+
+        $userProfile->identifier = $data->get('id');
+        $userProfile->firstName = $data->get('first_name');
+        $userProfile->lastName = $data->get('last_name');
+        $userProfile->displayName = $data->get('username');
+        $userProfile->photoURL = $data->get('photo_url');
+        $username = $data->get('username');
+        if (!empty($username)) {
+            // Only some accounts have usernames.
+            $userProfile->profileURL = "https://t.me/{$username}";
+        }
+
+        return $userProfile;
+    }
+
+    /**
+     * See: https://telegram.im/widget-login.php
+     * See: https://gist.github.com/anonymous/6516521b1fb3b464534fbc30ea3573c2
      */
     protected function authenticateCheckError()
     {
-        $error = $this->filterInput(INPUT_GET, 'error', FILTER_SANITIZE_SPECIAL_CHARS);
+        $auth_data = $this->parseAuthData();
 
-        if (empty($error)) {
-            return;
+        $check_hash = $auth_data['hash'];
+        unset($auth_data['hash']);
+        $data_check_arr = [];
+
+        foreach ($auth_data as $key => $value) {
+            if (!empty($value)) {
+                $data_check_arr[] = $key . '=' . $value;
+            }
+        }
+        sort($data_check_arr);
+
+        $data_check_string = implode("\n", $data_check_arr);
+        $secret_key = hash('sha256', $this->botSecret, true);
+        $hash = hash_hmac('sha256', $data_check_string, $secret_key);
+
+        if (!Random::equals($hash, $check_hash)) {
+            throw new InvalidAuthorizationCodeException(
+                sprintf('Provider returned an error: %s', 'Data is NOT from Telegram')
+            );
         }
 
-        $description = $this->filterInput(INPUT_GET, 'error_description', FILTER_SANITIZE_SPECIAL_CHARS);
-        $uri         = $this->filterInput(INPUT_GET, 'error_uri',         FILTER_SANITIZE_SPECIAL_CHARS);
-
-        $message = sprintf(
-            'Telegram returned an error: %s %s %s',
-            $error,
-            isset($description) ? $description : '',
-            isset($uri)         ? $uri         : ''
-        );
-
-        if ($error === 'access_denied') {
-            throw new AuthorizationDeniedException($message);
+        if (!is_string($auth_data['auth_date']) || !ctype_digit($auth_data['auth_date'])
+            || (time() - $auth_data['auth_date']) > 86400 || $auth_data['auth_date'] > time() + 120
+        ) {
+            throw new InvalidAuthorizationCodeException(
+                sprintf('Provider returned an error: %s', 'Data is outdated')
+            );
         }
 
-        throw new InvalidAuthorizationCodeException($message);
+        $expectedState = $this->getStoredData('authorization_state');
+        $this->deleteStoredData('authorization_state');
+        if (!Random::equals($expectedState, $this->filterInput(INPUT_GET, 'ha_state'))) {
+            throw new InvalidAuthorizationCodeException('Invalid or consumed Telegram login state.');
+        }
     }
 
     /**
-     * Generate PKCE verifier/challenge, state and nonce, store them,
-     * then redirect the browser to Telegram's authorization endpoint.
-     * Execution does not return — exits after the Location header.
+     * See: https://telegram.im/widget-login.php
      */
     protected function authenticateBegin()
     {
-        $codeVerifier  = $this->generateCodeVerifier();
-        $codeChallenge = $this->generateCodeChallenge($codeVerifier);
-        $state         = bin2hex($this->secureRandomBytes(16));
-        $nonce         = bin2hex($this->secureRandomBytes(16));
+        $this->logger->debug(sprintf('%s::authenticateBegin(), redirecting user to:', get_class($this)));
 
-        $this->storeData('pkce_code_verifier',  $codeVerifier);
-        $this->storeData('authorization_state', $state);
-        $this->storeData('oidc_nonce',          $nonce);
-
-        $params = array(
-            'client_id'             => $this->clientId,
-            'redirect_uri'          => $this->callback,
-            'response_type'         => 'code',
-            'scope'                 => $this->scope,
-            'state'                 => $state,
-            'nonce'                 => $nonce,
-            'code_challenge'        => $codeChallenge,
-            'code_challenge_method' => 'S256',
-        );
-
-        $authUrl = self::AUTH_URL . '?' . http_build_query($params, '', '&');
-
-        $this->logger->debug(
-            sprintf('%s::authenticateBegin(), redirecting to:', get_class($this)),
-            array($authUrl)
-        );
-
-        HttpClient\Util::redirect($authUrl);
+        exit($this->getLoginHtml());
     }
 
-    /**
-     * @param  string $code
-     *
-     * @throws InvalidAuthorizationStateException
-     * @throws UnexpectedApiResponseException
-     */
-    protected function authenticateFinish($code)
+    /** Render a widget whose callback is bound to this session and login attempt. */
+    protected function getLoginHtml()
+    {
+        $state = Random::token();
+        $this->storeData('authorization_state', $state);
+        $callback = explode('#', $this->callbackUrl, 2);
+        $callbackUrl = $callback[0] . (strpos($callback[0], '?') === false ? '?' : '&') . 'ha_state=' . $state;
+        if (isset($callback[1])) {
+            $callbackUrl .= '#' . $callback[1];
+        }
+        $callbackUrl = htmlspecialchars($callbackUrl, ENT_QUOTES, 'UTF-8');
+        $botId = htmlspecialchars($this->botId, ENT_QUOTES, 'UTF-8');
+        $nonce = htmlspecialchars((string) $this->config->get('nonce'), ENT_QUOTES, 'UTF-8');
+        $nonce_code = $nonce === '' ? '' : "nonce=\"{$nonce}\"";
+
+        return <<<HTML
+<center>
+    <script async src="https://telegram.org/js/telegram-widget.js?7"
+            {$nonce_code}
+            data-telegram-login="{$botId}"
+            data-size="large"
+            data-auth-url="{$callbackUrl}"
+            data-request-access="write">
+    </script>
+</center>
+HTML;
+    }
+
+    protected function authenticateFinish()
     {
         $this->logger->debug(
             sprintf('%s::authenticateFinish(), callback url:', get_class($this)),
-            array(HttpClient\Util::getCurrentUrl(true))
+            [Util::getCurrentUrl(true)]
         );
 
-        $returnedState = $this->filterInput(INPUT_GET, 'state');
-        $savedState    = $this->getStoredData('authorization_state');
-
-        if (! $savedState || $savedState !== $returnedState) {
-            $this->deleteStoredData('authorization_state');
-            throw new InvalidAuthorizationStateException(
-                'The authorization state [state=' . htmlentities((string) $returnedState, ENT_QUOTES) . '] '
-                . 'is either invalid or has already been consumed.'
-            );
-        }
-
-        $codeVerifier = (string) $this->getStoredData('pkce_code_verifier');
-        $nonce        = (string) $this->getStoredData('oidc_nonce');
-
-        $rawResponse = $this->httpClient->request(
-            self::TOKEN_URL,
-            'POST',
-            array(
-                'grant_type'    => 'authorization_code',
-                'code'          => $code,
-                'redirect_uri'  => $this->callback,
-                'client_id'     => $this->clientId,
-                'code_verifier' => $codeVerifier,
-            ),
-            array(
-                'Authorization' => 'Basic ' . base64_encode($this->clientId . ':' . $this->clientSecret),
-                'Content-Type'  => 'application/x-www-form-urlencoded',
-            )
-        );
-
-        $this->validateApiResponse('Telegram token endpoint request failed');
-
-        $tokenData = new Data\Collection((array) json_decode($rawResponse, true));
-
-        if ($tokenData->exists('error')) {
-            throw new UnexpectedApiResponseException(sprintf(
-                'Telegram token endpoint error: %s — %s',
-                $tokenData->get('error'),
-                $tokenData->get('error_description') !== null ? $tokenData->get('error_description') : '(no description)'
-            ));
-        }
-
-        if (! $tokenData->exists('id_token')) {
-            throw new UnexpectedApiResponseException(
-                'Telegram token endpoint returned no "id_token". Raw response: ' . $rawResponse
-            );
-        }
-
-        $idToken = $tokenData->get('id_token');
-        $claims  = $this->validateIdToken($idToken, $nonce !== '' ? $nonce : null);
-
-        $this->storeData('access_token', $tokenData->get('access_token'));
-        $this->storeData('token_type',   $tokenData->get('token_type'));
-        $this->storeData('id_token',     $idToken);
-
-        if ($tokenData->exists('expires_in')) {
-            $this->storeData('expires_in', $tokenData->get('expires_in'));
-            $this->storeData('expires_at', time() + (int) $tokenData->get('expires_in'));
-        }
-
-        $this->storeData('user_claims', json_encode($claims));
-
-        $this->deleteStoredData('pkce_code_verifier');
-        $this->deleteStoredData('authorization_state');
-        $this->deleteStoredData('oidc_nonce');
+        $this->storeData('auth_data', $this->parseAuthData());
 
         $this->initialize();
     }
 
-    public function isConnected()
+    protected function parseAuthData()
     {
-        if (! $this->getStoredData('id_token')) {
-            return false;
-        }
-
-        $expiresAt = $this->getStoredData('expires_at');
-
-        if ($expiresAt === null) {
-            return true;
-        }
-
-        return (int) $expiresAt > time();
-    }
-
-    public function getAccessToken()
-    {
-        $tokens  = parent::getAccessToken();
-        $idToken = $this->getStoredData('id_token');
-
-        if ($idToken) {
-            $tokens['id_token'] = $idToken;
-        }
-
-        return $tokens;
-    }
-
-    /**
-     *
-     * Accepts expired id_tokens (e.g. restored from database).
-     * Verifies signature, iss and aud but skips exp check.
-     *
-     * @param array $tokens  Must contain 'id_token'.
-     */
-    public function setAccessToken($tokens = array())
-    {
-        if (empty($tokens['id_token'])) {
-            throw new UnexpectedApiResponseException(
-                'setAccessToken() requires "id_token" to be present in the supplied array.'
-            );
-        }
-
-        $claims = $this->parseIdTokenPayload($tokens['id_token']);
-
-        $this->clearStoredData();
-
-        foreach ($tokens as $key => $value) {
-            $this->storeData($key, $value);
-        }
-
-        $this->storeData('user_claims', json_encode($claims));
-
-        $this->initialize();
-    }
-
-    public function getUserProfile()
-    {
-        $claims = $this->getClaimsFromStorage();
-
-        $profile             = new User\Profile();
-        $profile->identifier = $claims['sub'];
-
-        $fullName = trim(isset($claims['name']) ? $claims['name'] : '');
-
-        $profile->displayName = $fullName
-            ? $fullName
-            : (isset($claims['preferred_username']) ? $claims['preferred_username'] : null);
-        $profile->firstName = $this->parseFirstName($fullName);
-        $profile->lastName  = $this->parseLastName($fullName);
-        $profile->photoURL  = isset($claims['picture'])      ? $claims['picture']      : null;
-        $profile->phone     = isset($claims['phone_number']) ? $claims['phone_number'] : null;
-
-        if (! empty($claims['preferred_username'])) {
-            $profile->profileURL = 'https://t.me/' . ltrim($claims['preferred_username'], '@');
-        }
-
-        return $profile;
-    }
-
-    /**
-     * Return all JWT claims as decoded from Telegram's id_token.
-     *
-     * @return array
-     *
-     * @throws UnexpectedApiResponseException
-     */
-    public function getRawClaims()
-    {
-        return $this->getClaimsFromStorage();
-    }
-
-    /**
-     * @return array
-     *
-     * @throws UnexpectedApiResponseException
-     */
-    protected function getClaimsFromStorage()
-    {
-        $claimsJson = $this->getStoredData('user_claims');
-
-        if ($claimsJson) {
-            $claims = json_decode($claimsJson, true);
-
-            if (is_array($claims) && ! empty($claims['sub'])) {
-                return $claims;
-            }
-        }
-
-        $idToken = $this->getStoredData('id_token');
-
-        if (! $idToken) {
-            throw new UnexpectedApiResponseException(
-                'Provider API returned an unexpected response.'
-            );
-        }
-
-        $claims = $this->parseIdTokenPayload($idToken);
-
-        $this->storeData('user_claims', json_encode($claims));
-
-        return $claims;
-    }
-
-    /**
-     * Full OIDC validation: signature + iss + aud + exp + nonce.
-     * Used only during authenticateFinish().
-     *
-     * @param  string      $idToken
-     * @param  string|null $expectedNonce
-     * @return array
-     *
-     * @throws UnexpectedApiResponseException
-     */
-    protected function validateIdToken($idToken, $expectedNonce)
-    {
-        $payload = $this->parseIdTokenPayload($idToken);
-
-        $exp = isset($payload['exp']) ? (int) $payload['exp'] : 0;
-
-        if ($exp < (time() - self::CLOCK_SKEW)) {
-            throw new UnexpectedApiResponseException(
-                'JWT id_token has expired (exp=' . $exp . ').'
-            );
-        }
-
-        $nonce = isset($payload['nonce']) ? $payload['nonce'] : '';
-
-        if ($expectedNonce !== null && $nonce !== $expectedNonce) {
-            throw new UnexpectedApiResponseException(
-                'JWT nonce mismatch — possible replay attack.'
-            );
-        }
-
-        return $payload;
-    }
-
-    /**
-     * Decode and verify JWT signature + iss + aud. Does not check exp or nonce.
-     * Used for setAccessToken() and storage fallback (tokens may be expired).
-     *
-     * @param  string $idToken
-     * @return array
-     *
-     * @throws UnexpectedApiResponseException
-     */
-    protected function parseIdTokenPayload($idToken)
-    {
-        $parts = explode('.', $idToken);
-
-        if (count($parts) !== 3) {
-            throw new UnexpectedApiResponseException(
-                'Malformed JWT id_token: expected 3 dot-separated segments.'
-            );
-        }
-
-        $headerB64    = $parts[0];
-        $payloadB64   = $parts[1];
-        $signatureB64 = $parts[2];
-
-        $header  = json_decode($this->base64UrlDecode($headerB64),  true);
-        $payload = json_decode($this->base64UrlDecode($payloadB64), true);
-
-        if (! is_array($header) || ! is_array($payload)) {
-            throw new UnexpectedApiResponseException(
-                'Failed to JSON-decode the JWT header or payload.'
-            );
-        }
-
-        $iss = isset($payload['iss']) ? $payload['iss'] : '';
-
-        if ($iss !== self::ISSUER) {
-            throw new UnexpectedApiResponseException(sprintf(
-                'JWT issuer (iss) mismatch: expected "%s", got "%s".',
-                self::ISSUER,
-                $iss !== '' ? $iss : '(missing)'
-            ));
-        }
-
-        $aud = isset($payload['aud']) ? (string) $payload['aud'] : '';
-
-        if ($aud !== (string) $this->clientId) {
-            throw new UnexpectedApiResponseException(sprintf(
-                'JWT audience (aud) mismatch: expected "%s", got "%s".',
-                $this->clientId,
-                $aud !== '' ? $aud : '(missing)'
-            ));
-        }
-
-        $this->verifyJwtSignature(
-            $headerB64,
-            $payloadB64,
-            $this->base64UrlDecode($signatureB64),
-            $header
-        );
-
-        return $payload;
-    }
-
-    /**
-     * @param  string $headerB64
-     * @param  string $payloadB64
-     * @param  string $signature
-     * @param  array  $header
-     *
-     * @throws UnexpectedApiResponseException
-     */
-    protected function verifyJwtSignature($headerB64, $payloadB64, $signature, array $header)
-    {
-        $alg = strtoupper(isset($header['alg']) ? $header['alg'] : '');
-        $kid = isset($header['kid']) ? $header['kid'] : null;
-
-        $algoMap = array(
-            'RS256' => OPENSSL_ALGO_SHA256,
-            'RS384' => OPENSSL_ALGO_SHA384,
-            'RS512' => OPENSSL_ALGO_SHA512,
-        );
-
-        if (! isset($algoMap[$alg])) {
-            throw new UnexpectedApiResponseException(
-                'Unsupported or missing JWT signing algorithm: "' . $alg . '".'
-            );
-        }
-
-        $publicKey = $this->jwkToRsaPublicKey($this->findJwk($kid));
-
-        $result = openssl_verify(
-            $headerB64 . '.' . $payloadB64,
-            $signature,
-            $publicKey,
-            $algoMap[$alg]
-        );
-
-        if ($result !== 1) {
-            throw new UnexpectedApiResponseException(
-                'JWT signature verification failed. OpenSSL: ' . openssl_error_string()
-            );
-        }
-    }
-
-    /**
-     * Fetch and cache Telegram's JWKS, return the key matching $kid.
-     *
-     * @param  string|null $kid
-     * @return array
-     *
-     * @throws UnexpectedApiResponseException
-     */
-    protected function findJwk($kid)
-    {
-        static $cache = null;
-
-        if ($cache === null) {
-            $raw   = $this->httpClient->request(self::JWKS_URL);
-            $this->validateApiResponse('Failed to fetch JWKS from Telegram');
-            $cache = json_decode($raw, true);
-
-            if (empty($cache['keys']) || ! is_array($cache['keys'])) {
-                throw new UnexpectedApiResponseException(
-                    'Failed to parse JWKS from: ' . self::JWKS_URL
-                );
-            }
-        }
-
-        foreach ($cache['keys'] as $jwk) {
-            $jwkKid = isset($jwk['kid']) ? $jwk['kid'] : null;
-            if ($kid === null || $jwkKid === $kid) {
-                return $jwk;
-            }
-        }
-
-        throw new UnexpectedApiResponseException(sprintf(
-            'No JWKS key found for kid="%s". Telegram may have rotated the signing key.',
-            $kid !== null ? $kid : '(none)'
-        ));
-    }
-
-    /**
-     * Convert an RSA JWK to an OpenSSL public key resource.
-     *
-     * @param  array $jwk
-     * @return resource|\OpenSSLAsymmetricKey
-     *
-     * @throws UnexpectedApiResponseException
-     */
-    protected function jwkToRsaPublicKey(array $jwk)
-    {
-        if ((isset($jwk['kty']) ? $jwk['kty'] : '') !== 'RSA') {
-            throw new UnexpectedApiResponseException(
-                'Only RSA JWKs are supported. Got: "' . (isset($jwk['kty']) ? $jwk['kty'] : 'missing') . '".'
-            );
-        }
-
-        if (empty($jwk['n']) || empty($jwk['e'])) {
-            throw new UnexpectedApiResponseException('JWK is missing RSA parameters "n" or "e".');
-        }
-
-        $n = $this->base64UrlDecode($jwk['n']);
-        $e = $this->base64UrlDecode($jwk['e']);
-
-        $rsaBody   = $this->asn1Seq($this->asn1Int($n) . $this->asn1Int($e));
-        $oid       = "\x30\x0d\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01\x05\x00";
-        $bitString = "\x03" . $this->asn1Len(strlen($rsaBody) + 1) . "\x00" . $rsaBody;
-        $spki      = "\x30" . $this->asn1Len(strlen($oid . $bitString)) . $oid . $bitString;
-
-        $pem = "-----BEGIN PUBLIC KEY-----\n"
-             . chunk_split(base64_encode($spki), 64, "\n")
-             . "-----END PUBLIC KEY-----\n";
-
-        $key = openssl_pkey_get_public($pem);
-
-        if ($key === false) {
-            throw new UnexpectedApiResponseException(
-                'openssl_pkey_get_public() failed. OpenSSL: ' . openssl_error_string()
-            );
-        }
-
-        return $key;
-    }
-
-    /**
-     * @return string
-     */
-    protected function generateCodeVerifier()
-    {
-        return rtrim(strtr(base64_encode($this->secureRandomBytes(32)), '+/', '-_'), '=');
-    }
-
-    /**
-     * @param  string $verifier
-     * @return string
-     */
-    protected function generateCodeChallenge($verifier)
-    {
-        return rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
-    }
-
-    /**
-     * Secure random bytes compatible with PHP 5.6 and PHP 7+.
-     *
-     * @param  int    $length
-     * @return string
-     *
-     * @throws \RuntimeException
-     */
-    protected function secureRandomBytes($length)
-    {
-        if (function_exists('random_bytes')) {
-            return random_bytes($length);
-        }
-
-        $strong = false;
-        $bytes  = openssl_random_pseudo_bytes($length, $strong);
-
-        if ($bytes === false || ! $strong) {
-            throw new \RuntimeException(
-                'Unable to generate cryptographically secure random bytes. '
-                . 'Ensure the OpenSSL PHP extension is enabled.'
-            );
-        }
-
-        return $bytes;
-    }
-
-    /**
-     * @param  string $input
-     * @return string
-     */
-    protected function base64UrlDecode($input)
-    {
-        $padded = $input . str_repeat('=', (4 - strlen($input) % 4) % 4);
-        return base64_decode(strtr($padded, '-_', '+/'));
-    }
-
-    /**
-     * @param  string $bytes
-     * @return string
-     */
-    protected function asn1Int($bytes)
-    {
-        if (ord($bytes[0]) > 0x7f) {
-            $bytes = "\x00" . $bytes;
-        }
-        return "\x02" . $this->asn1Len(strlen($bytes)) . $bytes;
-    }
-
-    /**
-     * @param  string $contents
-     * @return string
-     */
-    protected function asn1Seq($contents)
-    {
-        return "\x30" . $this->asn1Len(strlen($contents)) . $contents;
-    }
-
-    /**
-     * @param  int $length
-     * @return string
-     */
-    protected function asn1Len($length)
-    {
-        if ($length < 0x80) {
-            return chr($length);
-        }
-        $packed = ltrim(pack('N', $length), "\x00");
-        return chr(0x80 | strlen($packed)) . $packed;
-    }
-
-    /**
-     * @param  string $fullName
-     * @return string
-     */
-    protected function parseFirstName($fullName)
-    {
-        $parts = explode(' ', trim($fullName), 2);
-        return isset($parts[0]) ? $parts[0] : '';
-    }
-
-    /**
-     * @param  string $fullName
-     * @return string
-     */
-    protected function parseLastName($fullName)
-    {
-        $parts = explode(' ', trim($fullName), 2);
-        return isset($parts[1]) ? $parts[1] : '';
+        return [
+            'id' => $this->filterInput(INPUT_GET, 'id'),
+            'first_name' => $this->filterInput(INPUT_GET, 'first_name'),
+            'last_name' => $this->filterInput(INPUT_GET, 'last_name'),
+            'username' => $this->filterInput(INPUT_GET, 'username'),
+            'photo_url' => $this->filterInput(INPUT_GET, 'photo_url'),
+            'auth_date' => $this->filterInput(INPUT_GET, 'auth_date'),
+            'hash' => $this->filterInput(INPUT_GET, 'hash'),
+        ];
     }
 }

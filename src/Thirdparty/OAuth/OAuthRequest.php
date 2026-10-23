@@ -330,9 +330,6 @@ class OAuthRequest
      */
     private static function generate_nonce()
     {
-        $mt   = microtime();
-        $rand = mt_rand();
-        
-        return md5($mt . $rand); // md5s look nicer than numbers
+        return \Hybridauth\Data\Random::token();
     }
 }
