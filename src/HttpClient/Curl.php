@@ -44,6 +44,8 @@ class Curl implements HttpClientInterface
      */
     protected $requestArguments = [];
 
+    protected $requestOptions = [];
+
     /**
      * Default request headers
      *
@@ -104,13 +106,28 @@ class Curl implements HttpClientInterface
      */
     public function request($uri, $method = 'GET', $parameters = [], $headers = [], $multipart = false)
     {
-        $this->requestHeader = array_replace($this->requestHeader, (array)$headers);
+        $requestHeaders = $this->requestHeader;
+        foreach ((array) $headers as $name => $value) {
+            foreach (array_keys($requestHeaders) as $existing) {
+                if (strcasecmp($name, $existing) === 0) {
+                    unset($requestHeaders[$existing]);
+                }
+            }
+            $requestHeaders[$name] = $value;
+        }
+        $curlOptions = $this->curlOptions;
+        $this->responseHeader = [];
+        $this->responseBody = '';
+        $this->responseHttpCode = 0;
+        $this->responseClientError = null;
+        $this->responseClientInfo = [];
+        $method = strtoupper($method);
 
         $this->requestArguments = [
             'uri' => $uri,
             'method' => $method,
             'parameters' => $parameters,
-            'headers' => $this->requestHeader,
+            'headers' => $requestHeaders,
         ];
 
         $curl = curl_init();
@@ -118,38 +135,52 @@ class Curl implements HttpClientInterface
         switch ($method) {
             case 'GET':
             case 'DELETE':
-                unset($this->curlOptions[CURLOPT_POST]);
-                unset($this->curlOptions[CURLOPT_POSTFIELDS]);
+                unset($curlOptions[CURLOPT_POST]);
+                unset($curlOptions[CURLOPT_POSTFIELDS]);
 
-                $uri = $uri . (strpos($uri, '?') ? '&' : '?') . http_build_query($parameters);
+                $uri = explode('#', $uri, 2)[0];
+                if ($parameters) {
+                    $uri .= (strpos($uri, '?') !== false ? '&' : '?') . http_build_query($parameters);
+                }
                 if ($method === 'DELETE') {
-                    $this->curlOptions[CURLOPT_CUSTOMREQUEST] = 'DELETE';
+                    $curlOptions[CURLOPT_CUSTOMREQUEST] = 'DELETE';
                 }
                 break;
             case 'PUT':
             case 'POST':
             case 'PATCH':
                 $body_content = $multipart ? $parameters : http_build_query($parameters);
-                if (isset($this->requestHeader['Content-Type'])
-                    && $this->requestHeader['Content-Type'] == 'application/json'
-                ) {
-                    $body_content = json_encode($parameters);
+                foreach ($requestHeaders as $name => $value) {
+                    if (strcasecmp($name, 'Content-Type') === 0
+                        && strtolower(trim(strtok($value, ';'))) === 'application/json'
+                    ) {
+                        $body_content = json_encode($parameters);
+                    }
                 }
 
                 if ($method === 'POST') {
-                    $this->curlOptions[CURLOPT_POST] = true;
+                    $curlOptions[CURLOPT_POST] = true;
                 } else {
-                    $this->curlOptions[CURLOPT_CUSTOMREQUEST] = $method;
+                    $curlOptions[CURLOPT_CUSTOMREQUEST] = $method;
                 }
-                $this->curlOptions[CURLOPT_POSTFIELDS] = $body_content;
+                $curlOptions[CURLOPT_POSTFIELDS] = $body_content;
                 break;
+            case 'HEAD':
+                $curlOptions[CURLOPT_NOBODY] = true;
+                break;
+            default:
+                $curlOptions[CURLOPT_CUSTOMREQUEST] = $method;
         }
 
-        $this->curlOptions[CURLOPT_URL] = $uri;
-        $this->curlOptions[CURLOPT_HTTPHEADER] = $this->prepareRequestHeaders();
-        $this->curlOptions[CURLOPT_HEADERFUNCTION] = [$this, 'fetchResponseHeader'];
+        $curlOptions[CURLOPT_URL] = $uri;
+        $curlOptions[CURLOPT_HTTPHEADER] = [];
+        foreach ($requestHeaders as $name => $value) {
+            $curlOptions[CURLOPT_HTTPHEADER][] = trim($name) . ': ' . trim($value);
+        }
+        $curlOptions[CURLOPT_HEADERFUNCTION] = [$this, 'fetchResponseHeader'];
+        $this->requestOptions = $curlOptions;
 
-        foreach ($this->curlOptions as $opt => $value) {
+        foreach ($curlOptions as $opt => $value) {
             curl_setopt($curl, $opt, $value);
         }
 
@@ -184,7 +215,7 @@ class Curl implements HttpClientInterface
      */
     public function getResponse()
     {
-        $curlOptions = $this->curlOptions;
+        $curlOptions = $this->requestOptions ?: $this->curlOptions;
 
         $curlOptions[CURLOPT_HEADERFUNCTION] = '*omitted';
 
@@ -287,6 +318,9 @@ class Curl implements HttpClientInterface
      */
     protected function fetchResponseHeader($curl, $header)
     {
+        if (strpos($header, 'HTTP/') === 0) {
+            $this->responseHeader = [];
+        }
         $pos = strpos($header, ':');
 
         if (!empty($pos)) {
