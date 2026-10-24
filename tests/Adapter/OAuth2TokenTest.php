@@ -112,6 +112,30 @@ class OAuth2TokenTest extends TestCase
         $this->assertTrue($adapter->hasAccessTokenExpired());
     }
 
+    public function testLegacyXmlIsExplicitAndCannotDeclareEntities(): void
+    {
+        $http = new OAuth2Http();
+        $http->headers = ['Content-Type' => 'application/xml'];
+        $xml = '<token><access_token>legacy-token</access_token><expires_in>60</expires_in></token>';
+        try { $this->adapter($http)->accept($xml); $this->fail('Implicit XML token response accepted.'); }
+        catch (InvalidAccessTokenException $expected) { $this->assertNotEmpty($expected->getMessage()); }
+        $adapter = $this->adapter($http, ['token_response_format' => 'xml']);
+        $adapter->accept($xml);
+        $this->assertSame('legacy-token', $adapter->getAccessToken()['access_token']);
+        $before = $adapter->getAccessToken();
+        try {
+            $adapter->accept('<!DOCTYPE token [<!ENTITY demo "synthetic">]><token><access_token>&demo;</access_token></token>');
+            $this->fail('XML entity declaration accepted.');
+        } catch (InvalidAccessTokenException $expected) { $this->assertSame($before, $adapter->getAccessToken()); }
+    }
+
+    public function testUnknownResponseFormatIsRejectedEvenForValidJson(): void
+    {
+        $adapter = $this->adapter(null, ['token_response_format' => 'unknown']);
+        $this->expectException(InvalidAccessTokenException::class);
+        $adapter->accept('{"access_token":"synthetic"}');
+    }
+
     public function testRefreshRotationAndOmittedFieldsHaveExplicitSemantics(): void
     {
         $adapter = $this->adapter();

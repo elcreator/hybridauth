@@ -746,6 +746,9 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
     protected function parseTokenResponse($response)
     {
         $format = $this->config->get('token_response_format') ?: 'auto';
+        if (!in_array($format, ['auto', 'json', 'form', 'xml'], true)) {
+            throw new InvalidAccessTokenException('Unsupported token_response_format.');
+        }
         $contentType = '';
         foreach ((array) $this->httpClient->getResponseHeader() as $name => $value) {
             if (strtolower(str_replace('_', '-', $name)) === 'content-type') {
@@ -762,10 +765,11 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
             return $data;
         }
         if ($format === 'xml') {
-            return (new Data\Parser())->parseXml($response);
-        }
-        if ($format !== 'auto' && $format !== 'form') {
-            throw new InvalidAccessTokenException('Unsupported token_response_format.');
+            if (stripos($response, '<!DOCTYPE') !== false || stripos($response, '<!ENTITY') !== false) {
+                throw new InvalidAccessTokenException('XML token responses must not declare entities.');
+            }
+            $data = (new Data\Parser())->parseXml($response);
+            return is_array($data) && count($data) === 1 ? reset($data) : $data;
         }
         if ($format === 'auto' && $contentType !== ''
             && strpos($contentType, 'application/x-www-form-urlencoded') === false
