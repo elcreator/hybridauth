@@ -36,6 +36,8 @@ use Hybridauth\User;
  */
 class X extends OAuth2
 {
+    protected $tokenEndpointAuthMethod = 'client_secret_basic';
+
     protected $pkceMethod = 'S256';
 
     /**
@@ -72,11 +74,6 @@ class X extends OAuth2
 
         $this->deleteStoredData('codeVerifier');
         $this->deleteStoredData('codeChallenge');
-
-        $this->tokenExchangeHeaders = [
-            'Authorization' => 'Basic ' . base64_encode($this->clientId . ':' . $this->clientSecret),
-            'Content-Type'  => 'application/x-www-form-urlencoded',
-        ];
 
         if ($this->isRefreshTokenAvailable()) {
             $this->tokenRefreshParameters += [

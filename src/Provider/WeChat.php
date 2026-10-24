@@ -83,6 +83,7 @@ class WeChat extends OAuth2
         unset($this->tokenExchangeParameters['client_secret']);
 
         if ($this->isRefreshTokenAvailable()) {
+            unset($this->tokenRefreshParameters['client_id'], $this->tokenRefreshParameters['client_secret']);
             $this->tokenRefreshParameters += [
                 'appid' => $this->clientId,
             ];
@@ -97,6 +98,14 @@ class WeChat extends OAuth2
     /**
      * {@inheritdoc}
      */
+    protected function prepareTokenRequest($parameters, $headers)
+    {
+        if (!$this->config->exists('token_endpoint_auth_method')) {
+            return [$parameters, $headers];
+        }
+        return parent::prepareTokenRequest($parameters, $headers);
+    }
+
     protected function validateAccessTokenExchange($response)
     {
         $collection = parent::validateAccessTokenExchange($response);

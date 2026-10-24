@@ -246,6 +246,9 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
     /** @var string|null */
     protected $pkceMethod = null;
 
+    /** @var string */
+    protected $tokenEndpointAuthMethod = 'client_secret_post';
+
     /**
      * {@inheritdoc}
      */
@@ -254,10 +257,20 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
         $this->clientId = $this->config->filter('keys')->get('id') ?: $this->config->filter('keys')->get('key');
         $this->clientSecret = $this->config->filter('keys')->get('secret');
 
-        if (!$this->clientId || !$this->clientSecret) {
+        if ($this->config->exists('token_endpoint_auth_method')) {
+            $this->tokenEndpointAuthMethod = $this->config->get('token_endpoint_auth_method');
+        }
+        if (!in_array($this->tokenEndpointAuthMethod, ['client_secret_post', 'client_secret_basic', 'none'], true)) {
+            throw new InvalidApplicationCredentialsException('Unsupported token_endpoint_auth_method.');
+        }
+        if (!$this->clientId || ($this->tokenEndpointAuthMethod !== 'none' && !$this->clientSecret)) {
             throw new InvalidApplicationCredentialsException(
-                'Your application id is required in order to connect to ' . $this->providerId
+                'Your application id and the credentials required by the token authentication method are missing for '
+                . $this->providerId
             );
+        }
+        if ($this->tokenEndpointAuthMethod === 'none') {
+            $this->pkceMethod = 'S256';
         }
 
         $this->scope = $this->config->exists('scope') ? $this->config->get('scope') : $this->scope;
@@ -311,6 +324,8 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
             $this->tokenRefreshParameters = [
                 'grant_type' => 'refresh_token',
                 'refresh_token' => $refreshToken,
+                'client_id' => $this->clientId,
+                'client_secret' => $this->clientSecret,
             ];
         }
 
@@ -582,16 +597,45 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
             $parameters['code_verifier'] = $verifier;
         }
 
+        list($parameters, $headers) = $this->prepareTokenRequest($parameters, $this->tokenExchangeHeaders);
         $response = $this->httpClient->request(
             $this->accessTokenUrl,
             $this->tokenExchangeMethod,
             $parameters,
-            $this->tokenExchangeHeaders
+            $headers
         );
 
         $this->validateApiResponse('Unable to exchange code for API access token');
 
         return $response;
+    }
+
+    protected function prepareTokenRequest($parameters, $headers)
+    {
+        $explicit = $this->config->exists('token_endpoint_auth_method');
+        $basicHeader = false;
+        foreach ($headers as $name => $value) {
+            if (strcasecmp($name, 'Authorization') === 0) {
+                $basicHeader = stripos($value, 'Basic ') === 0;
+                if ($explicit || $this->tokenEndpointAuthMethod !== 'client_secret_post') {
+                    unset($headers[$name]);
+                }
+            }
+        }
+        if ($this->tokenEndpointAuthMethod === 'none') {
+            unset($parameters['client_secret']);
+            $parameters['client_id'] = $this->clientId;
+        } elseif ($this->tokenEndpointAuthMethod === 'client_secret_basic') {
+            unset($parameters['client_id'], $parameters['client_secret']);
+            $headers['Authorization'] = 'Basic ' . base64_encode(urlencode($this->clientId) . ':' . urlencode($this->clientSecret));
+        } elseif ($basicHeader && !$explicit) {
+            // Preserve custom provider authentication without duplicating credentials in the body.
+            unset($parameters['client_id'], $parameters['client_secret']);
+        } else {
+            $parameters['client_id'] = $this->clientId;
+            $parameters['client_secret'] = $this->clientSecret;
+        }
+        return [$parameters, $headers];
     }
 
     /**
@@ -756,19 +800,17 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
      */
     public function refreshAccessToken($parameters = [])
     {
-        $this->tokenRefreshParameters = !empty($parameters)
-            ? $parameters
-            : $this->tokenRefreshParameters;
-
-        if (!$this->isRefreshTokenAvailable()) {
+        if (empty($parameters) && !$this->isRefreshTokenAvailable()) {
             return null;
         }
 
+        $parameters = !empty($parameters) ? $parameters : $this->tokenRefreshParameters;
+        list($parameters, $headers) = $this->prepareTokenRequest($parameters, $this->tokenRefreshHeaders);
         $response = $this->httpClient->request(
             $this->accessTokenUrl,
             $this->tokenRefreshMethod,
-            $this->tokenRefreshParameters,
-            $this->tokenRefreshHeaders
+            $parameters,
+            $headers
         );
 
         $this->validateApiResponse('Unable to refresh the access token');
