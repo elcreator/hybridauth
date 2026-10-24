@@ -4,7 +4,7 @@ OAuth2 requests no longer inherit another request's bearer headers, JSON encodin
 
 Replacing an adapter's tokens discards the previous account's derived refresh parameters. Disconnect clears resource credentials and refresh capability. Token responses are validated before changing stored tokens: access tokens must be nonempty strings, lifetime fields must be nonnegative integers within the platform's timestamp range, and OAuth errors are rejected even on successful HTTP responses. Exceptions from this validation do not include the raw token response.
 
-A new authorization response discards an old refresh token when no replacement is supplied. A refresh response may omit its refresh token, retaining the current one; a supplied replacement rotates it. Missing expiry means unknown lifetime rather than inheriting an earlier token's expiry. The provider-specific absolute timestamp field `expires` is supported in addition to standard `expires_in`.
+A new authorization response discards an old refresh token when no replacement is supplied. A refresh response may omit its refresh token, retaining the current one; a supplied replacement rotates it. Missing expiry means unknown lifetime rather than inheriting an earlier token's expiry. The legacy field `expires` (Facebook, Deezer) is read as a relative lifetime in seconds when `expires_in` is absent; `expires=0` means the token does not expire. Fields returned as `null` are treated as omitted. A `scope` returned as an array of strings (Twitch) is stored space-separated.
 
 ## S256 PKCE
 

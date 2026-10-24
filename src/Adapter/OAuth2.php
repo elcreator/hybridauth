@@ -683,28 +683,46 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
         if (!is_string($accessToken) || trim($accessToken) === '') {
             throw new InvalidAccessTokenException('Provider returned no usable access_token.');
         }
-        foreach (['refresh_token', 'token_type', 'scope'] as $name) {
-            if ($collection->exists($name) && !is_string($collection->get($name))) {
+        // Null fields are treated as omitted.
+        foreach (['refresh_token', 'token_type'] as $name) {
+            $value = $collection->get($name);
+            if ($value !== null && !is_string($value)) {
                 throw new InvalidAccessTokenException('Provider returned an invalid ' . $name . '.');
             }
         }
-
-        $expiresAt = null;
-        foreach (['expires_in', 'expires'] as $name) {
-            if ($collection->exists($name)) {
-                $value = $collection->get($name);
-                if ((!is_int($value) && !is_float($value) && !is_string($value))
-                    || !preg_match('/^[0-9]+$/D', (string) $value)
-                    || (float) $value > PHP_INT_MAX - time()
-                ) {
-                    throw new InvalidAccessTokenException('Provider returned an invalid ' . $name . '.');
+        // Some providers (e.g. Twitch) return the granted scopes as an array.
+        $scope = $collection->get('scope');
+        if (is_array($scope)) {
+            foreach ($scope as $item) {
+                if (!is_string($item)) {
+                    throw new InvalidAccessTokenException('Provider returned an invalid scope.');
                 }
             }
+            $scope = implode(' ', $scope);
+        } elseif ($scope !== null && !is_string($scope)) {
+            throw new InvalidAccessTokenException('Provider returned an invalid scope.');
         }
-        if ($collection->exists('expires_in')) {
-            $expiresAt = time() + (int) $collection->get('expires_in');
-        } elseif ($collection->exists('expires')) {
-            $expiresAt = (int) $collection->get('expires');
+
+        $lifetimes = [];
+        foreach (['expires_in', 'expires'] as $name) {
+            $value = $collection->get($name);
+            if ($value === null) {
+                continue;
+            }
+            if ((!is_int($value) && !is_float($value) && !is_string($value))
+                || !preg_match('/^[0-9]+$/D', (string) $value)
+                || (float) $value > PHP_INT_MAX - time()
+            ) {
+                throw new InvalidAccessTokenException('Provider returned an invalid ' . $name . '.');
+            }
+            $lifetimes[$name] = (int) $value;
+        }
+        // Legacy "expires" (Facebook, Deezer) is a relative lifetime in seconds where 0 means non-expiring.
+        $expiresAt = null;
+        if (isset($lifetimes['expires_in'])) {
+            $expiresAt = time() + $lifetimes['expires_in'];
+        } elseif (!empty($lifetimes['expires'])) {
+            $expiresAt = time() + $lifetimes['expires'];
         }
 
         $this->storeData('access_token', $accessToken);
@@ -718,15 +736,15 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
 
         $this->deleteStoredData('expires_in');
         $this->deleteStoredData('expires_at');
-        if ($collection->exists('expires_in')) {
+        if (isset($lifetimes['expires_in'])) {
             $this->storeData('expires_in', $collection->get('expires_in'));
         }
         if ($expiresAt !== null) {
             $this->storeData('expires_at', $expiresAt);
         }
 
-        if ($collection->exists('scope')) {
-            $this->storeData('scope', $collection->get('scope'));
+        if ($scope !== null) {
+            $this->storeData('scope', $scope);
         } elseif (!$this->refreshingAccessToken) {
             $this->deleteStoredData('scope');
         }

@@ -58,10 +58,11 @@ class OAuth2TokenTest extends TestCase
             '{"access_token":"new","expires_in":0.5}',
             '{"access_token":"new","expires_in":true}',
             '{"access_token":"new","expires_in":"999999999999999999999"}',
-            '{"access_token":"new","expires":null}',
+            '{"access_token":"new","expires":"soon"}',
             '{"access_token":"new","refresh_token":[]}',
             '{"access_token":"new","token_type":[]}',
-            '{"access_token":"new","scope":[]}',
+            '{"access_token":"new","scope":[1]}',
+            '{"access_token":"new","scope":{"read":true}}',
         ];
         foreach ($cases as $response) {
             try { $adapter->accept($response); $this->fail('Invalid token response accepted: ' . $response); }
@@ -105,11 +106,49 @@ class OAuth2TokenTest extends TestCase
         $adapter->accept('{"access_token":"immediate","expires_in":0}');
         $this->assertSame(0, $adapter->getAccessToken()['expires_in']);
         $this->assertTrue($adapter->hasAccessTokenExpired());
-        $expiry = time() + 60;
-        $adapter->accept(json_encode(['access_token' => 'absolute', 'expires' => $expiry]));
-        $this->assertSame($expiry, $adapter->getAccessToken()['expires_at']);
-        $adapter->accept('{"access_token":"expired","expires":0}');
-        $this->assertTrue($adapter->hasAccessTokenExpired());
+    }
+
+    public function testLegacyExpiresIsRelativeAndZeroMeansNonExpiring(): void
+    {
+        $adapter = $this->adapter();
+        $before = time();
+        $adapter->accept('access_token=legacy&expires=5183999');
+        $expiresAt = $adapter->getAccessToken()['expires_at'];
+        $this->assertGreaterThanOrEqual($before + 5183999, $expiresAt);
+        $this->assertLessThanOrEqual(time() + 5183999, $expiresAt);
+        $this->assertFalse($adapter->hasAccessTokenExpired());
+        $adapter->accept('access_token=offline&expires=0');
+        $this->assertArrayNotHasKey('expires_at', $adapter->getAccessToken());
+        $this->assertNull($adapter->hasAccessTokenExpired());
+        $adapter->accept('{"access_token":"standard","expires_in":60,"expires":0}');
+        $this->assertFalse($adapter->hasAccessTokenExpired());
+    }
+
+    public function testArrayScopesAndNullFieldsAreAccepted(): void
+    {
+        $adapter = $this->adapter();
+        $adapter->accept('{"access_token":"twitch","refresh_token":"refresh-T","scope":["openid","user:read:email"],'
+            . '"token_type":"bearer","expires_in":14124}');
+        $this->assertSame('openid user:read:email', $adapter->getAccessToken()['scope']);
+        $adapter->accept('{"access_token":"nulls","refresh_token":null,"token_type":null,"scope":null,'
+            . '"expires_in":null,"expires":null}');
+        $tokens = $adapter->getAccessToken();
+        $this->assertSame('nulls', $tokens['access_token']);
+        $this->assertArrayNotHasKey('refresh_token', $tokens);
+        $this->assertArrayNotHasKey('scope', $tokens);
+        $this->assertNull($adapter->hasAccessTokenExpired());
+        $adapter->accept('{"access_token":"empty-grant","scope":[]}');
+        $this->assertSame('', $adapter->getAccessToken()['scope']);
+    }
+
+    public function testRefreshFlagIsResetWhenRefreshValidationFails(): void
+    {
+        $adapter = $this->adapter();
+        $adapter->accept('{"access_token":"A","refresh_token":"refresh-A"}');
+        try { $adapter->acceptRefresh('{"error":"invalid_grant"}'); $this->fail('Refresh error accepted.'); }
+        catch (InvalidAccessTokenException $expected) { $this->assertNotEmpty($expected->getMessage()); }
+        $adapter->accept('{"access_token":"other-account"}');
+        $this->assertFalse($adapter->isRefreshTokenAvailable());
     }
 
     public function testLegacyXmlIsExplicitAndCannotDeclareEntities(): void
