@@ -249,6 +249,9 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
     /** @var string */
     protected $tokenEndpointAuthMethod = 'client_secret_post';
 
+    /** @var string auto|json|form|xml; the token_response_format option overrides it. */
+    protected $tokenResponseFormat = 'auto';
+
     /**
      * {@inheritdoc}
      */
@@ -763,7 +766,7 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
 
     protected function parseTokenResponse($response)
     {
-        $format = $this->config->get('token_response_format') ?: 'auto';
+        $format = $this->config->get('token_response_format') ?: $this->tokenResponseFormat;
         if (!in_array($format, ['auto', 'json', 'form', 'xml'], true)) {
             throw new InvalidAccessTokenException('Unsupported token_response_format.');
         }

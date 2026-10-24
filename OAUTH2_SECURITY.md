@@ -50,7 +50,7 @@ The authority must support public clients and S256 for that registration. Settin
 
 ## Response formats and metadata
 
-The default `token_response_format` is `auto`: JSON and legacy form responses are accepted. A response declaring JSON must contain a valid JSON object and cannot fall back to form parsing. Undeclared JSON is recognized by its opening delimiter. Nonstandard form responses with incorrect media types require explicit `token_response_format => 'form'`. Legacy XML requires `token_response_format => 'xml'`; document type and entity declarations are rejected. `json` can be selected to require JSON even without a correct media type.
+The default `token_response_format` is `auto`: JSON and legacy form responses are accepted. A response declaring JSON must contain a valid JSON object and cannot fall back to form parsing. Undeclared JSON is recognized by its opening delimiter. Nonstandard form responses with incorrect media types require explicit `token_response_format => 'form'`; adapters for such providers declare this default themselves (QQ), and configuration still overrides it. Legacy XML requires `token_response_format => 'xml'`; document type and entity declarations are rejected. `json` can be selected to require JSON even without a correct media type.
 
 `getAccessToken()` now includes the provider's returned `scope` and a `token_metadata` array of additional response fields. These fields round-trip through `setAccessToken()`. Metadata cannot overwrite canonical token or expiry fields. During refresh, an omitted scope retains the current grant's scope; a new authorization response clears old scope when none is returned. Granted scopes describe provider output and do not replace resource-server permission checks.
 

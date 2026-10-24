@@ -151,6 +151,27 @@ class OAuth2TokenTest extends TestCase
         $this->assertFalse($adapter->isRefreshTokenAvailable());
     }
 
+    public function testAdapterDefaultResponseFormatAppliesAndConfigurationOverridesIt(): void
+    {
+        $http = new OAuth2Http();
+        $http->headers = ['content_type' => 'text/html; charset=utf-8'];
+        $adapter = new FormTokenAdapter(['keys' => ['id' => 'demo', 'secret' => 'synthetic-secret'],
+            'callback' => 'https://app.invalid/callback'], $http, new StorageImpl());
+        $adapter->accept('access_token=qq-style&expires_in=7776000&refresh_token=refresh-Q');
+        $this->assertSame('qq-style', $adapter->getAccessToken()['access_token']);
+        $this->assertSame('refresh-Q', $adapter->getAccessToken()['refresh_token']);
+        $adapter = new FormTokenAdapter(['keys' => ['id' => 'demo', 'secret' => 'synthetic-secret'],
+            'callback' => 'https://app.invalid/callback', 'token_response_format' => 'auto'], $http, new StorageImpl());
+        $this->expectException(InvalidAccessTokenException::class);
+        $adapter->accept('access_token=qq-style');
+    }
+
+    public function testQqDeclaresFormTokenResponses(): void
+    {
+        $property = new \ReflectionProperty(\Hybridauth\Provider\QQ::class, 'tokenResponseFormat');
+        $this->assertSame('form', $property->getDefaultValue());
+    }
+
     public function testLegacyXmlIsExplicitAndCannotDeclareEntities(): void
     {
         $http = new OAuth2Http();

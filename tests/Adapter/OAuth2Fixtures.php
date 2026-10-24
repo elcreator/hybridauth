@@ -37,3 +37,8 @@ class OAuth2Adapter extends \Hybridauth\Adapter\OAuth2
         return isset($this->input[$name]) ? $this->input[$name] : null;
     }
 }
+
+class FormTokenAdapter extends OAuth2Adapter
+{
+    protected $tokenResponseFormat = 'form';
+}
