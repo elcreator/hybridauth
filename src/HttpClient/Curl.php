@@ -106,15 +106,7 @@ class Curl implements HttpClientInterface
      */
     public function request($uri, $method = 'GET', $parameters = [], $headers = [], $multipart = false)
     {
-        $requestHeaders = $this->requestHeader;
-        foreach ((array) $headers as $name => $value) {
-            foreach (array_keys($requestHeaders) as $existing) {
-                if (strcasecmp($name, $existing) === 0) {
-                    unset($requestHeaders[$existing]);
-                }
-            }
-            $requestHeaders[$name] = $value;
-        }
+        $requestHeaders = Util::mergeHeaders($this->requestHeader, $headers);
         $curlOptions = $this->curlOptions;
         $this->responseHeader = [];
         $this->responseBody = '';
@@ -150,12 +142,8 @@ class Curl implements HttpClientInterface
             case 'POST':
             case 'PATCH':
                 $body_content = $multipart ? $parameters : http_build_query($parameters);
-                foreach ($requestHeaders as $name => $value) {
-                    if (strcasecmp($name, 'Content-Type') === 0
-                        && strtolower(trim(strtok($value, ';'))) === 'application/json'
-                    ) {
-                        $body_content = json_encode($parameters);
-                    }
+                if (Util::isJsonContentType($requestHeaders)) {
+                    $body_content = json_encode($parameters);
                 }
 
                 if ($method === 'POST') {

@@ -113,7 +113,7 @@ class Guzzle implements HttpClientInterface
      */
     public function request($uri, $method = 'GET', $parameters = [], $headers = [], $multipart = false)
     {
-        $requestHeaders = array_replace($this->requestHeader, (array)$headers);
+        $requestHeaders = Util::mergeHeaders($this->requestHeader, $headers);
         $this->responseBody = '';
         $this->responseHeader = [];
         $this->responseHttpCode = 0;
@@ -143,9 +143,7 @@ class Guzzle implements HttpClientInterface
                 case 'POST':
                     $body_type = $multipart ? 'multipart' : 'form_params';
 
-                    if (isset($requestHeaders['Content-Type'])
-                        && $requestHeaders['Content-Type'] === 'application/json'
-                    ) {
+                    if (Util::isJsonContentType($requestHeaders)) {
                         $body_type = 'json';
                     }
 
