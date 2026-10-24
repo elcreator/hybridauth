@@ -19,7 +19,7 @@ class AuthenticationSecurityTest extends TestCase
     private function config()
     {
         return ['keys' => ['id' => 'demo', 'secret' => 'synthetic-secret'],
-            'callback' => 'https://demo.invalid/callback?provider=Telegram#fragment'];
+            'callback' => 'https://demo.invalid/callback?provider=TelegramWidget#fragment'];
     }
 
     public function testSecureTokensDoNotRepeatWithMtSeed(): void
@@ -74,11 +74,11 @@ class AuthenticationSecurityTest extends TestCase
 
     private function telegramAttempt()
     {
-        $adapter = new Telegram($this->config(), null, new MemoryStorage());
+        $adapter = new TelegramWidget($this->config(), null, new MemoryStorage());
         $html = $adapter->widget();
         preg_match('/ha_state=([a-f0-9]{64})/', $html, $match);
         $this->assertCount(2, $match);
-        $this->assertStringContainsString('provider=Telegram&amp;ha_state=', $html);
+        $this->assertStringContainsString('provider=TelegramWidget&amp;ha_state=', $html);
         $this->assertStringContainsString('#fragment', $html);
         return [$adapter, $match[1]];
     }
@@ -97,7 +97,7 @@ class AuthenticationSecurityTest extends TestCase
     {
         list($attacker, $state) = $this->telegramAttempt();
         list($victim) = $this->telegramAttempt();
-        foreach ([$victim, new Telegram($this->config(), null, new MemoryStorage())] as $adapter) {
+        foreach ([$victim, new TelegramWidget($this->config(), null, new MemoryStorage())] as $adapter) {
             $adapter->input = $this->signedTelegramData($state);
             try { $adapter->authenticate(); $this->fail('Cross-session login accepted.'); }
             catch (InvalidAuthorizationCodeException $expected) { $this->assertFalse($adapter->isConnected()); }

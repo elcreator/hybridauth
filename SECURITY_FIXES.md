@@ -6,7 +6,9 @@ The default HTTP client now verifies TLS certificates and hostnames. Configure a
 
 OAuth state and OAuth 1 nonces use secure randomness, with a strong OpenSSL fallback on older PHP. OAuth state comparisons are exact and constant-time, and each state is consumed before token exchange. OAuth 1 HMAC-SHA1 signatures remain unchanged because they are part of the provider protocol.
 
-Telegram's widget includes a fresh, session-bound `ha_state` in its callback URL. Valid signatures from another session, unsolicited callbacks, and consumed states are rejected. Existing callbacks generated before this update must restart login. Custom Telegram widget integrations must preserve the generated callback URL, including its query string. Signed timestamps must be recent and cannot be far in the future.
+Telegram supports two login flows through separate providers. `Telegram` uses OpenID Connect (Authorization Code + PKCE) with the Client ID and Client Secret from BotFather's Web Login settings; its state and nonce are compared in constant time and consumed on the callback, and its cached JWKS is refetched once when a signing key rotates. `TelegramWidget` keeps the legacy Login Widget flow using the bot username and bot token. The two flows use different credentials and callbacks, so they are separate providers rather than a configuration switch, following `Twitter`/`X` and `LinkedIn`/`LinkedInOpenID`.
+
+The widget includes a fresh, session-bound `ha_state` in its callback URL. Valid signatures from another session, unsolicited callbacks, and consumed states are rejected. Existing callbacks generated before this update must restart login. Custom widget integrations must preserve the generated callback URL, including its query string. Signed timestamps must be recent and cannot be far in the future.
 
 Steam discovery and API URLs use HTTPS, including requests carrying the API key.
 
