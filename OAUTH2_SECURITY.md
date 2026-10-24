@@ -18,7 +18,7 @@ $config = [
 ];
 ```
 
-X enables S256 automatically. Other confidential-client adapters retain their provider-compatible default until PKCE is configured. Only S256 is supported; a configured requirement never falls back to plain or an exchange without a verifier. PKCE requires state validation. Each authorization attempt creates a fresh verifier and generated state, stores them in the adapter's storage, and consumes them during the callback. Reconstruct the callback adapter with the same provider configuration and session storage. A new attempt supersedes an earlier outstanding attempt for that provider/session. Explicit caller-supplied state remains supported; the caller must generate a fresh value for each attempt.
+X enables S256 automatically. Other confidential-client adapters retain their provider-compatible default until PKCE is configured. Only S256 is supported; `pkce => false` is rejected with an explicit error for adapters that require PKCE (X and public clients). A configured requirement never falls back to plain or an exchange without a verifier. PKCE requires state validation. Each authorization attempt creates a fresh verifier and generated state, stores them in the adapter's storage, and consumes them during the callback. Reconstruct the callback adapter with the same provider configuration and session storage. A new attempt supersedes an earlier outstanding attempt for that provider/session. Explicit caller-supplied state remains supported; the caller must generate a fresh value for each attempt.
 
 X callbacks started before this change must restart authorization because the previous verifier storage format has been replaced. Failed exchanges also require a new attempt.
 

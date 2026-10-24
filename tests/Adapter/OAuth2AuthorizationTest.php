@@ -129,6 +129,23 @@ class OAuth2AuthorizationTest extends TestCase
         }
     }
 
+    public function testDisablingRequiredPkceExplainsWhy(): void
+    {
+        $cases = [
+            [\Hybridauth\Provider\X::class, $this->config(['pkce' => false])],
+            [OAuth2Adapter::class, $this->config(['pkce' => false, 'token_endpoint_auth_method' => 'none'])],
+        ];
+        foreach ($cases as $case) {
+            list($class, $config) = $case;
+            try { new $class($config, new OAuth2Http(), new StorageImpl()); $this->fail('Required PKCE was disabled.'); }
+            catch (InvalidApplicationCredentialsException $expected) {
+                $this->assertStringContainsString('PKCE cannot be disabled', $expected->getMessage());
+            }
+        }
+        $this->expectExceptionMessage('Only S256 PKCE is supported.');
+        new OAuth2Adapter($this->config(['pkce' => 'plain']), new OAuth2Http(), new StorageImpl());
+    }
+
     public function testXUsesSharedPkceAndRotatesEveryAttempt(): void
     {
         $storage = new StorageImpl();

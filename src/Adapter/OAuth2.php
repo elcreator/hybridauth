@@ -286,8 +286,13 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
             $pkce = $this->config->get('pkce');
             if ($pkce === true || $pkce === 'S256') {
                 $this->pkceMethod = 'S256';
-            } elseif ($pkce !== false || $this->pkceMethod !== null) {
+            } elseif ($pkce !== false) {
                 throw new InvalidApplicationCredentialsException('Only S256 PKCE is supported.');
+            } elseif ($this->pkceMethod !== null) {
+                throw new InvalidApplicationCredentialsException(
+                    'PKCE cannot be disabled for ' . $this->providerId
+                    . ' because the provider or public client authentication requires it.'
+                );
             }
         }
         if ($this->pkceMethod && !$this->supportRequestState) {
