@@ -493,7 +493,8 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
             $this->deleteStoredData('authorization_state');
             $this->deleteStoredData('pkce_code_verifier');
             throw new InvalidAuthorizationStateException(
-                'The authorization state [state=' . substr(htmlentities((string) $state, ENT_QUOTES, 'UTF-8'), 0, 100) . '] '
+                'The authorization state [state='
+                . substr(htmlentities((string) $state, ENT_QUOTES, 'UTF-8'), 0, 100) . '] '
                 . 'of this page is either invalid or has already been consumed.'
             );
         }
@@ -558,7 +559,8 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
         if ($this->pkceMethod === 'S256') {
             $verifier = Data\Random::token();
             $this->storeData('pkce_code_verifier', $verifier);
-            $parameters['code_challenge'] = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
+            $challenge = base64_encode(hash('sha256', $verifier, true));
+            $parameters['code_challenge'] = rtrim(strtr($challenge, '+/', '-_'), '=');
             $parameters['code_challenge_method'] = 'S256';
         }
         if (isset($parameters['scope']) && is_array($parameters['scope'])) {
@@ -600,7 +602,9 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
             $verifier = $this->getStoredData('pkce_code_verifier');
             $this->deleteStoredData('pkce_code_verifier');
             if (!is_string($verifier) || !preg_match('/^[A-Za-z0-9._~-]{43,128}$/D', $verifier)) {
-                throw new InvalidAuthorizationCodeException('Missing or consumed PKCE verifier; restart authorization.');
+                throw new InvalidAuthorizationCodeException(
+                    'Missing or consumed PKCE verifier; restart authorization.'
+                );
             }
             $parameters['code_verifier'] = $verifier;
         }
@@ -635,7 +639,8 @@ abstract class OAuth2 extends AbstractAdapter implements AdapterInterface
             $parameters['client_id'] = $this->clientId;
         } elseif ($this->tokenEndpointAuthMethod === 'client_secret_basic') {
             unset($parameters['client_id'], $parameters['client_secret']);
-            $headers['Authorization'] = 'Basic ' . base64_encode(urlencode($this->clientId) . ':' . urlencode($this->clientSecret));
+            $headers['Authorization'] = 'Basic '
+                . base64_encode(urlencode($this->clientId) . ':' . urlencode($this->clientSecret));
         } elseif ($basicHeader && !$explicit) {
             // Preserve custom provider authentication without duplicating credentials in the body.
             unset($parameters['client_id'], $parameters['client_secret']);

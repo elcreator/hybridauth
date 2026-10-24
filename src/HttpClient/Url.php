@@ -66,10 +66,13 @@ class Url
             $origin = parse_url($rule['origin']);
             if (!$origin || empty($origin['scheme']) || empty($origin['host'])
                 || !in_array(strtolower($origin['scheme']), ['http', 'https'], true)
-                || isset($origin['user']) || isset($origin['pass']) || isset($origin['query']) || isset($origin['fragment'])
+                || isset($origin['user']) || isset($origin['pass'])
+                || isset($origin['query']) || isset($origin['fragment'])
                 || (isset($origin['path']) && $origin['path'] !== '' && $origin['path'] !== '/')
             ) {
-                throw new InvalidArgumentException('Trusted OpenID origins must specify an exact HTTP(S) scheme, host and optional port.');
+                throw new InvalidArgumentException(
+                    'Trusted OpenID origins must specify an exact HTTP(S) scheme, host and optional port.'
+                );
             }
             $originHost = trim($origin['host'], '[]');
             if (!filter_var($originHost, FILTER_VALIDATE_IP) && !preg_match('/^[a-z0-9.-]+$/iD', $originHost)) {
@@ -85,7 +88,8 @@ class Url
                 $cidr = explode('/', $range);
                 $address = filter_var($cidr[0], FILTER_VALIDATE_IP);
                 $bits = strpos($cidr[0], ':') === false ? 32 : 128;
-                if (!$address || count($cidr) > 2 || (isset($cidr[1]) && (!ctype_digit($cidr[1]) || $cidr[1] > $bits))) {
+                $invalidBits = isset($cidr[1]) && (!ctype_digit($cidr[1]) || $cidr[1] > $bits);
+                if (!$address || count($cidr) > 2 || $invalidBits) {
                     throw new InvalidArgumentException('Invalid trusted OpenID address range.');
                 }
                 if ($sameOrigin) {
@@ -119,7 +123,9 @@ class Url
         }
         $path = isset($parts['path']) ? $parts['path'] : '/';
         if (isset($next['path']) && $next['path'] !== '') {
-            $path = $next['path'][0] === '/' ? $next['path'] : substr($path, 0, strrpos($path, '/') + 1) . $next['path'];
+            $path = $next['path'][0] === '/'
+                ? $next['path']
+                : substr($path, 0, strrpos($path, '/') + 1) . $next['path'];
             unset($parts['query']);
         }
         $trailingSlash = preg_match('#/(?:\.|\.\.)?$#', $path);

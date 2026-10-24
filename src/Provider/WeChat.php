@@ -106,6 +106,9 @@ class WeChat extends OAuth2
         return parent::prepareTokenRequest($parameters, $headers);
     }
 
+    /**
+     * {@inheritdoc}
+     */
     protected function validateAccessTokenExchange($response)
     {
         $collection = parent::validateAccessTokenExchange($response);
