@@ -173,10 +173,7 @@ class Curl implements HttpClientInterface
         }
 
         $curlOptions[CURLOPT_URL] = $uri;
-        $curlOptions[CURLOPT_HTTPHEADER] = [];
-        foreach ($requestHeaders as $name => $value) {
-            $curlOptions[CURLOPT_HTTPHEADER][] = trim($name) . ': ' . trim($value);
-        }
+        $curlOptions[CURLOPT_HTTPHEADER] = $this->prepareRequestHeaders();
         $curlOptions[CURLOPT_HEADERFUNCTION] = [$this, 'fetchResponseHeader'];
         $this->requestOptions = $curlOptions;
 
@@ -343,7 +340,9 @@ class Curl implements HttpClientInterface
     {
         $headers = [];
 
-        foreach ($this->requestHeader as $header => $value) {
+        $requestHeaders = isset($this->requestArguments['headers'])
+            ? $this->requestArguments['headers'] : $this->requestHeader;
+        foreach ($requestHeaders as $header => $value) {
             $headers[] = trim($header) . ': ' . trim($value);
         }
 

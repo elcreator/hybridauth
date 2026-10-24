@@ -87,6 +87,20 @@ class RequestIsolationTest extends TestCase
         $this->assertSame(7, $client->getResponse()['client']['opts'][CURLOPT_TIMEOUT]);
     }
 
+    public function testCustomHeaderPreparationStillReceivesOnlyCurrentRequestHeaders(): void
+    {
+        $client = new class extends Curl {
+            protected function prepareRequestHeaders() {
+                return array_merge(parent::prepareRequestHeaders(), ['X-Custom-Header: configured']);
+            }
+        };
+        $first = json_decode($client->request($this->url(), 'GET', [], ['Authorization' => 'Bearer synthetic-A']), true);
+        $second = json_decode($client->request($this->url()), true);
+        $this->assertSame('configured', $first['custom_header']);
+        $this->assertSame('configured', $second['custom_header']);
+        $this->assertNull($second['authorization']);
+    }
+
     public function testGuzzleDoesNotRetainHeadersOrErrors(): void
     {
         $transport = new class {
