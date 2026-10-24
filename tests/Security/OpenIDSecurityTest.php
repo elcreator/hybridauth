@@ -39,6 +39,24 @@ class MixedDns extends Url
     protected static function resolveHost($host) { return ['8.8.8.8', '127.0.0.1']; }
 }
 
+class Ipv6OnlyDns extends Url
+{
+    protected static function lookupIpv4($host) { return []; }
+    protected static function lookupIpv6($host) { return ['2606:4700:4700::1111']; }
+}
+
+class DualStackDns extends Url
+{
+    protected static function lookupIpv4($host) { return ['8.8.8.8']; }
+    protected static function lookupIpv6($host) { return ['2001:4860:4860::8888']; }
+}
+
+class PrivateAaaaDns extends Url
+{
+    protected static function lookupIpv4($host) { return ['8.8.8.8']; }
+    protected static function lookupIpv6($host) { return ['fd00::1']; }
+}
+
 class SteamHttp extends Curl
 {
     public $url;
@@ -114,6 +132,14 @@ class OpenIDSecurityTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
         MixedDns::resolve('https://example.invalid/');
+    }
+
+    public function testAaaaRecordsAreResolvedAndValidated(): void
+    {
+        $this->assertSame('2606:4700:4700::1111', Ipv6OnlyDns::resolve('https://ipv6-only.invalid/')['address']);
+        $this->assertSame('8.8.8.8', DualStackDns::resolve('https://dual-stack.invalid/')['address']);
+        $this->expectException(InvalidArgumentException::class);
+        PrivateAaaaDns::resolve('https://rebinding.invalid/');
     }
 
     public function testBothRawTransportsRejectPrivateUrlsBeforeConnecting(): void

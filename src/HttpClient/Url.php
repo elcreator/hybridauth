@@ -45,9 +45,31 @@ class Url
         ];
     }
 
+    /** IPv4 answers come first, so dual-stack hosts keep pinning to IPv4. */
     protected static function resolveHost($host)
     {
-        return gethostbynamel($host);
+        return array_values(array_unique(array_merge(static::lookupIpv4($host), static::lookupIpv6($host))));
+    }
+
+    protected static function lookupIpv4($host)
+    {
+        $addresses = gethostbynamel($host);
+        return $addresses ?: [];
+    }
+
+    protected static function lookupIpv6($host)
+    {
+        if (!function_exists('dns_get_record') || !defined('DNS_AAAA')) {
+            return [];
+        }
+        $records = @dns_get_record($host, DNS_AAAA);
+        $addresses = [];
+        foreach ($records ?: [] as $record) {
+            if (isset($record['ipv6']) && filter_var($record['ipv6'], FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+                $addresses[] = strtolower($record['ipv6']);
+            }
+        }
+        return $addresses;
     }
 
     private static function trustedRanges($parts, $rules)
