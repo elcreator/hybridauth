@@ -500,13 +500,14 @@ class LightOpenID
     protected function request($url, $method='GET', $params=array(), $update_claimed_id=false)
     {
         $originalMethod = $method;
+        $redirected = false;
         for ($redirects = 0; $redirects <= 5; $redirects++) {
             // Validate every hop, including URLs obtained from discovery documents.
             $this->resolveUrl($url);
             $this->headers = [];
             $this->responseCode = 0;
-            $useCurl = function_exists('curl_init') && !(ini_get('safe_mode') || ini_get('open_basedir'));
-            $response = $useCurl
+            // Redirects are followed here, so open_basedir no longer restricts cURL.
+            $response = function_exists('curl_init')
                 ? $this->request_curl($url, $method, $params, false)
                 : $this->request_streams($url, $method, $params, false);
             if ($this->responseCode === 405 && $method === 'HEAD') {
@@ -528,9 +529,11 @@ class LightOpenID
                 if ($method !== 'POST') {
                     $params = [];
                 }
+                $redirected = true;
                 continue;
             }
-            if ($update_claimed_id) {
+            // Only a followed redirect changes the claimed identifier (e.g. not an X-XRDS-Location hop).
+            if ($update_claimed_id && $redirected) {
                 $this->identity = $this->claimed_id = strtok($url, '#');
             }
             return $originalMethod === 'HEAD' ? $this->headers : $response;

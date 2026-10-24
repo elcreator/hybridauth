@@ -142,6 +142,42 @@ class OpenIDSecurityTest extends TestCase
         PrivateAaaaDns::resolve('https://rebinding.invalid/');
     }
 
+    public function testCurlIsUsedUnderOpenBasedir(): void
+    {
+        if (!function_exists('curl_init')) {
+            $this->markTestSkipped('cURL is not available.');
+        }
+        $root = dirname(__DIR__, 2);
+        $command = [PHP_BINARY, '-d', 'open_basedir=' . $root, __DIR__ . '/fixtures/open-basedir-transport.php'];
+        $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $root);
+        $output = stream_get_contents($pipes[1]);
+        $errors = stream_get_contents($pipes[2]);
+        fclose($pipes[1]); fclose($pipes[2]);
+        proc_close($process);
+        $this->assertSame('curl', $output, $errors);
+    }
+
+    public function testDiscoveryHopsKeepClaimedIdentityButRedirectsUpdateIt(): void
+    {
+        $xrds = '<xrds><Service><Type>http://specs.openid.net/auth/2.0/signon</Type>'
+            . '<URI>https://8.8.8.8/server</URI></Service></xrds>';
+        $client = new ScriptedOpenID();
+        $client->identity = 'http://8.8.8.8/me#fragment';
+        $client->responses = [[200, ['x-xrds-location' => 'http://8.8.8.8/xrds'], ''],
+            [200, ['content-type' => 'application/xrds+xml'], ''],
+            [200, ['content-type' => 'application/xrds+xml'], $xrds]];
+        $this->assertSame('https://8.8.8.8/server', $client->discover('http://8.8.8.8/me#fragment'));
+        $this->assertSame('http://8.8.8.8/me#fragment', $client->identity);
+
+        $client = new ScriptedOpenID();
+        $client->identity = 'http://8.8.8.8/old';
+        $client->responses = [[301, ['location' => '/me'], ''],
+            [200, ['content-type' => 'application/xrds+xml'], ''],
+            [200, ['content-type' => 'application/xrds+xml'], $xrds]];
+        $this->assertSame('https://8.8.8.8/server', $client->discover('http://8.8.8.8/old'));
+        $this->assertSame('http://8.8.8.8/me', $client->identity);
+    }
+
     public function testBothRawTransportsRejectPrivateUrlsBeforeConnecting(): void
     {
         foreach (['curl', 'streams'] as $transport) {
