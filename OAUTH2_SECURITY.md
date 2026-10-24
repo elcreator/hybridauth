@@ -58,6 +58,6 @@ The default `token_response_format` is `auto`: JSON and legacy form responses ar
 
 Run `php vendor/bin/phpunit --do-not-cache-result`. The OAuth2 regression tests cover request isolation, token/account replacement, rotation, malformed responses, lifetime handling, PKCE callback reconstruction and consumption, authorization URLs, public clients, and provider authentication compatibility. HTTP fixtures and tokens are synthetic; no provider account or project API key is needed.
 
-The full suite passes on Windows PHP 8.3 and Docker PHP 8.3: 141 tests and 537 assertions. Twelve comparison probes also produce identical results on both platforms. Live authorization with external providers was not exercised.
+The full suite passes on Windows PHP 8.3 and Docker PHP 8.3: 141 tests and 537 assertions. Twelve comparison probes also produce identical results on both platforms. After the review follow-up (Telegram provider split, array scopes, legacy `expires`, OpenID discovery and transport fixes, shared header handling), the suite passes with 158 tests and 595 assertions on both platforms, and `src` lints on PHP 7.1. Live authorization with external providers was not exercised.
 
 A fresh Snyk Code scan reports the same 53 previously reviewed findings with no new findings or ignores: 44 refer to PHP's standalone test runner, eight to example/installer diagnostics, and one to the protocol-required OAuth 1 HMAC-SHA1 signature. These findings were compared by identity against the prior scan; they are not presented as a clean scanner result.
