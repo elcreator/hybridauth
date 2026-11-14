@@ -1,8 +1,8 @@
 {
-    "name": "hybridauth/hybridauth",
+    "name": "elcreator/hybridauth",
     "description": "PHP Social Authentication Library",
     "keywords": ["oauth", "openid", "authentication", "authorization", "social", "api", "google", "facebook", "twitter", "apple"],
-    "homepage": "https://hybridauth.github.io",
+    "homepage": "https://github.com/elcreator/hybridauth",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -12,11 +12,14 @@
         }
     ],
     "support": {
-        "issues": "https://github.com/hybridauth/hybridauth/issues",
+        "issues": "https://github.com/elcreator/hybridauth/issues",
         "gitter": "https://gitter.im/hybridauth/hybridauth"
     },
     "require": {
         "php": "^5.4 || ^7.0 || ^8.0"
+    },
+    "replace": {
+        "hybridauth/hybridauth": "self.version"
     },
     "require-dev": {
         "ext-curl": "*",
