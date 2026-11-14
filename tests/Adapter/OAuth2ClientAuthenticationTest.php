@@ -26,9 +26,9 @@ class OAuth2ClientAuthenticationTest extends TestCase
 
     public function testDefaultPostCredentialsAreIncludedInBothGrants(): void
     {
-        foreach ([OAuth2Adapter::class, \Hybridauth\Provider\Spotify::class, \Hybridauth\Provider\Google::class] as $class) {
+        foreach ([OAuth2Adapter::class, \Hybridauth\Provider\Spotify::class, \Hybridauth\Provider\Google::class, \Hybridauth\Provider\Mastodon::class] as $class) {
             $http = new OAuth2Http();
-            $adapter = new $class($this->config(), $http, new StorageImpl());
+            $adapter = new $class($this->config(['url' => 'https://mastodon.invalid']), $http, new StorageImpl());
             $this->exchange($adapter);
             $adapter->setAccessToken(['access_token' => 'A', 'refresh_token' => 'refresh-A']);
             $adapter->refreshAccessToken();

@@ -101,6 +101,24 @@ class RequestIsolationTest extends TestCase
         $this->assertNull($second['authorization']);
     }
 
+    public function testGuzzleDoesNotReadUnusedExceptionResponse(): void
+    {
+        $transport = new class {
+            public function request($method, $uri, $options) {
+                throw new class('Synthetic transport failure') extends \RuntimeException {
+                    public function getResponse() {
+                        throw new \LogicException('Unused response must not be read');
+                    }
+                };
+            }
+        };
+        $client = new Guzzle($transport);
+        $this->assertSame('', $client->request('https://provider.invalid'));
+        $this->assertSame('Synthetic transport failure', $client->getResponseClientError());
+        $this->assertSame(0, $client->getResponseHttpCode());
+        $this->assertSame([], $client->getResponseHeader());
+    }
+
     public function testGuzzleDoesNotRetainHeadersOrErrors(): void
     {
         $transport = new class {
